@@ -12,16 +12,17 @@ The gateway is meant to:
 - deploy and update the fleet from a declarative config, given only RunPod keys;
 - give a team scoped keys, usage accounting and rate limits.
 
-Starter engines: vLLM, llama.cpp and Strata, each from our own image.
+Starter engines: llama.cpp and Strata, each from our own image.
 
 ## Status
 
-**Phase 0: measurement spike.** Nothing here serves traffic yet. The repo holds
-a RunPod client and a probe CLI that measure how the platform really behaves
-(cold starts, timeouts, streaming, rollouts) before the gateway design is fixed.
+**Phase 1 in progress.** The measurement spike is done and the design is fixed.
+The unit agent and the llama.cpp engine image exist; the gateway and the fleet
+reconciler are not built yet, so nothing here serves traffic.
 
 - [spike/README.md](spike/README.md): how to run the spike
-- [docs/spike-findings.md](docs/spike-findings.md): results and decisions
+- [docs/design.md](docs/design.md): Phase 1 design
+- [docs/spike-findings.md](docs/spike-findings.md): what was measured, and the decisions that followed
 - [CONTRIBUTING.md](CONTRIBUTING.md): setup, tasks, commit rules
 
 ## Quick start
@@ -38,6 +39,9 @@ mise run test
 
 | Path | Purpose |
 | --- | --- |
+| `cmd/agent` | Entrypoint of every engine image: downloads the model, starts the engine, reports status, proxies requests |
+| `internal/agent` | The agent's lifecycle, downloader and engine drivers |
+| `images/` | Engine images (llama.cpp so far) |
 | `cmd/probe` | Spike CLI: creates test endpoints, runs probes, records JSONL |
 | `internal/runpod/manage` | RunPod REST v2 management client (endpoints, tags, releases, catalog) |
 | `internal/runpod/infer` | Request-side client (queue API, `/openai/v1`, load balancer) with timing |

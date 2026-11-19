@@ -108,9 +108,11 @@ Strata, from reading its `terminal/setup.py` (to be confirmed on a worker):
   `mtp/rt/experts.bin`. Setup skips the whole step when `mtp/rt/experts.bin`
   exists. This step was 4.5 to 6 minutes of the cold start, and `hf download`
   cannot replace it. It is the same for every model in the family, so the
-  prepared `mtp/` folder is built once and then either baked into our Strata
-  image or published to a repository of ours and fetched like any other file.
-  `DRAFTING=off` skips it at roughly half the output speed.
+  prepared `mtp/` folder is **baked into our Strata image**: the image build
+  runs Strata's own fetch and pack tools once, and the agent links the result
+  into `/data/Strata-data/mtp/` before starting Strata. The layer is versioned
+  with the image, which pins a Strata version. `DRAFTING=off` remains available
+  and skips it at roughly half the output speed.
 
 **Downloader: the Hugging Face CLI** (`hf download` with
 `HF_XET_HIGH_PERFORMANCE=1`), run by the agent as a child process. Measured on a
@@ -272,8 +274,9 @@ instance or asynchronous jobs are needed.
 
 ## Open items
 
-- Strata's prepared draft layer: bake it into the image or publish it to our own
-  repository, and whether the Qwen licence allows redistributing it publicly.
+- Whether the Qwen licence allows redistributing the prepared draft layer in a
+  public image; if not, the Strata image stays private or the layer is fetched
+  at start as today.
 - Confirm on a worker that `MODEL_PATH` skips Strata's verification pass.
 - GitHub owner and repository name (image names, Go module path).
 - Whether the early-`/ping` design holds on RunPod (first task of step 1).

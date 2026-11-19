@@ -10,8 +10,8 @@ contradicts. This spike measures them on real endpoints. Results go into
   Workers bill per second from start (including model download and load) until
   they scale down after the idle timeout (30 s by default).
 - The model is small (Qwen2.5 1.5B Instruct), so any 16 GB+ pool is enough.
-- `probe down` deletes only endpoints tagged `managed-by=rsp-spike` or listed in
-  `spike/state.json`. Run it when you finish, and confirm in the RunPod console.
+- `probe down` deletes only endpoints tagged `managed-by=rsp-spike`, named
+  `rsp-spike-*`, or listed in `spike/state.json`. Run it when you finish, and confirm in the RunPod console.
 
 ## Setup
 

@@ -96,8 +96,8 @@ adds a feature, reformats three files and bumps a dependency.
 - Use scoped RunPod keys: a management key for fleet changes and a narrower key
   for inference.
 - `probe up` creates billable endpoints and `probe down` deletes them. The tool
-  only deletes endpoints it tagged (`managed-by=rsp-spike`) or recorded in
-  `spike/state.json`. Always run `probe down` when a session ends.
+  only deletes endpoints it tagged (`managed-by=rsp-spike`), named `rsp-spike-*`,
+  or recorded in `spike/state.json`. Always run `probe down` when a session ends.
 - `spike/results/` and `spike/state.json` are git-ignored because they contain
   endpoint ids. Summarise results in `docs/spike-findings.md` instead.
 

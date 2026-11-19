@@ -86,7 +86,7 @@ func cmdUp(ctx context.Context, args []string) error {
 		"a": {
 			note: "queue + official worker-vllm (/run, /runsync, /openai/v1)",
 			req: manage.CreateEndpointRequest{
-				Name: "rsp-spike-a-queue-vllm",
+				Name: namePrefix + "a-queue-vllm",
 				Type: manage.TypeQueue,
 				Container: manage.Container{
 					Image: *imgWorker,
@@ -107,7 +107,7 @@ func cmdUp(ctx context.Context, args []string) error {
 		"b": {
 			note: "load balancer + stock vLLM server",
 			req: manage.CreateEndpointRequest{
-				Name: "rsp-spike-b-lb-vllm",
+				Name: namePrefix + "b-lb-vllm",
 				Type: manage.TypeLoadBalancer,
 				Container: manage.Container{
 					Image: *imgVLLM,
@@ -128,7 +128,7 @@ func cmdUp(ctx context.Context, args []string) error {
 		"c": {
 			note: "load balancer + stock llama.cpp server",
 			req: manage.CreateEndpointRequest{
-				Name: "rsp-spike-c-lb-llamacpp",
+				Name: namePrefix + "c-lb-llamacpp",
 				Type: manage.TypeLoadBalancer,
 				Container: manage.Container{
 					Image: *imgLlama,
@@ -152,11 +152,19 @@ func cmdUp(ctx context.Context, args []string) error {
 	if st == nil {
 		st = &state{Targets: map[string]target{}}
 	}
+	// Tagging is an account-level feature and may be off (403). Ownership then
+	// rests on the name prefix and the local state file.
 	tag, err := mc.EnsureTag(ctx, tagKey, tagValue)
-	if err != nil {
+	switch {
+	case err == nil:
+		st.TagID = tag.ID
+	case isForbidden(err):
+		tag = nil
+		fmt.Printf("note: resource tagging is unavailable on this account (%v); tracking endpoints by the %q name prefix instead\n", err, namePrefix)
+		rec.event("tagging_unavailable", fields{"err": err.Error()})
+	default:
 		return fmt.Errorf("ensure tag: %w", err)
 	}
-	st.TagID = tag.ID
 
 	for _, key := range strings.Split(strings.ToLower(*only), ",") {
 		key = strings.TrimSpace(key)
@@ -180,8 +188,10 @@ func cmdUp(ctx context.Context, args []string) error {
 		if err := saveState(st); err != nil {
 			return err
 		}
-		if err := mc.AttachTag(ctx, tag.ID, ep.ID); err != nil {
-			return fmt.Errorf("created %s (%s) but tagging failed, `down` will still delete it from state: %w", key, ep.ID, err)
+		if tag != nil {
+			if err := mc.AttachTag(ctx, tag.ID, ep.ID); err != nil {
+				return fmt.Errorf("created %s (%s) but tagging failed, `down` will still delete it from state: %w", key, ep.ID, err)
+			}
 		}
 		rec.event("endpoint_created", fields{"target": key, "id": ep.ID, "type": ep.Type, "urls": ep.RequestURLs, "version": ep.Version})
 		fmt.Printf("%s: created %s  %s  (%s)\n", key, ep.ID, ep.Name, spec.note)
@@ -281,15 +291,24 @@ func cmdDown(ctx context.Context, args []string) error {
 		return err
 	}
 
-	// Union of tagged endpoints and endpoints recorded in local state, so a failed
-	// tagging step cannot leave anything behind.
+	// Union of tagged endpoints, endpoints named with our prefix, and endpoints
+	// recorded in local state, so nothing this tool created can be left behind.
 	doomed := map[string]string{}
 	tagged, err := mc.ListEndpoints(ctx, tagKey, tagValue)
-	if err != nil {
+	if err != nil && !isForbidden(err) {
 		return fmt.Errorf("list tagged endpoints: %w", err)
 	}
 	for _, ep := range tagged {
 		doomed[ep.ID] = ep.Name
+	}
+	all, err := mc.ListEndpoints(ctx, "", "")
+	if err != nil {
+		return fmt.Errorf("list endpoints: %w", err)
+	}
+	for _, ep := range all {
+		if strings.HasPrefix(ep.Name, namePrefix) {
+			doomed[ep.ID] = ep.Name
+		}
 	}
 	st, _ := loadState()
 	if st != nil {
@@ -406,6 +425,12 @@ func cmdPatch(ctx context.Context, args []string) error {
 		}
 	}
 	return nil
+}
+
+// isForbidden reports whether err is a 403 from the management API.
+func isForbidden(err error) bool {
+	var apiErr *manage.APIError
+	return errors.As(err, &apiErr) && apiErr.Status == http.StatusForbidden
 }
 
 func verStr(v *int) string {

@@ -26,6 +26,9 @@ const (
 	// ownership tag: `down` only ever deletes endpoints carrying it.
 	tagKey   = "managed-by"
 	tagValue = "rsp-spike"
+	// every test endpoint is named with this prefix; `down` also matches on it,
+	// which covers accounts where resource tagging is not enabled.
+	namePrefix = "rsp-spike-"
 	// served model name, identical on every test endpoint.
 	servedModel = "spike-model"
 )
@@ -43,7 +46,7 @@ func init() {
 		{"catalog", "list serverless GPU pools with VRAM, price and availability", cmdCatalog},
 		{"up", "create the tagged test endpoints (billable while workers run)", cmdUp},
 		{"status", "show test endpoints, their workers and queue health", cmdStatus},
-		{"down", "delete every endpoint tagged " + tagKey + "=" + tagValue, cmdDown},
+		{"down", "delete every test endpoint (tagged " + tagKey + "=" + tagValue + " or named " + namePrefix + "*)", cmdDown},
 		{"chat", "one chat request (OpenAI or Anthropic format), timed, with optional retry", cmdChat},
 		{"burst", "N parallel streaming chat requests", cmdBurst},
 		{"disconnect", "drop a stream mid-response, then observe workers", cmdDisconnect},

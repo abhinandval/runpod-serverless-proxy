@@ -17,8 +17,9 @@ Starter engines: llama.cpp and Strata, each from our own image.
 ## Status
 
 **Phase 1 in progress.** The measurement spike is done and the design is fixed.
-The unit agent and the llama.cpp engine image exist; the gateway and the fleet
-reconciler are not built yet, so nothing here serves traffic.
+The unit agent, the llama.cpp engine image and the gateway core exist. Request
+records (SQLite), the Strata image and the fleet reconciler are not built yet,
+so units are still deployed by hand.
 
 - [spike/README.md](spike/README.md): how to run the spike
 - [docs/design.md](docs/design.md): Phase 1 design
@@ -39,6 +40,9 @@ mise run test
 
 | Path | Purpose |
 | --- | --- |
+| `cmd/gateway` | The gateway: client API, model routing, cold-start bridge |
+| `internal/gateway` | Request lifecycle, shared wake-up, keep-alives, response relay |
+| `internal/config` | YAML configuration with `${env.NAME}` substitution |
 | `cmd/agent` | Entrypoint of every engine image: downloads the model, starts the engine, reports status, proxies requests |
 | `internal/agent` | The agent's lifecycle, downloader and engine drivers |
 | `images/` | Engine images (llama.cpp so far) |

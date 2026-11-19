@@ -30,3 +30,7 @@ run = [
 [tasks.probe]
 description = "Run the spike probe CLI, e.g. `mise run probe -- catalog`"
 run = "go run ./cmd/probe"
+
+[tasks.gateway]
+description = "Run the gateway with ./config.yaml"
+run = "go run ./cmd/gateway"

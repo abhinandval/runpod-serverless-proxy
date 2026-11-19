@@ -7,6 +7,9 @@
 spike/results/
 spike/state.json
 
+# Local gateway configuration
+/config.yaml
+
 # Build output
 /bin/
 /dist/

@@ -1,0 +1,25 @@
+# Example gateway configuration. Copy to config.yaml (git-ignored) and adjust.
+# ${env.NAME} is replaced with that environment variable, so no secret needs to
+# be written here. See docs/design.md for the full schema.
+
+gateway:
+  listen: ":8080"
+  api_keys: ["${env.GATEWAY_KEY}"]      # what clients send as their API key
+
+fleet:
+  provider: runpod
+  inference_key: ${env.RUNPOD_INFERENCE_KEY}
+  hf_token: ${env.HF_TOKEN}              # optional; gated or private models
+
+units:
+  qwen27-a5000:
+    engine: llama.cpp
+    # Until `fleet apply` exists, deploy the endpoint yourself and put its id here.
+    endpoint_id: "<runpod endpoint id>"
+    # timeouts are optional; these are the llama.cpp baselines.
+    timeouts: {cold_start: 5m, idle: 60s, request: 5m}
+
+models:
+  qwen-27b:
+    unit: qwen27-a5000
+    aliases: [gpt-4o-mini, claude-sonnet, claude-haiku]

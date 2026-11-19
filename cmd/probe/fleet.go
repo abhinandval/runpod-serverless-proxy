@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	_ "embed"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -75,6 +76,7 @@ func cmdUp(ctx context.Context, args []string) error {
 	imgVLLM := fs.String("image-vllm", "vllm/vllm-openai:latest", "image for B (load balancer)")
 	imgLlama := fs.String("image-llamacpp", "ghcr.io/ggml-org/llama.cpp:server-cuda", "image for C (load balancer)")
 	imgAgentLlama := fs.String("image-agent-llamacpp", "ghcr.io/abhinandval/runpod-serverless-proxy/llamacpp:latest", "our llama.cpp image for L (load balancer)")
+	imgAgentStrata := fs.String("image-agent-strata", "ghcr.io/abhinandval/runpod-serverless-proxy/strata:latest", "our Strata image for T (load balancer)")
 	agentArgs := fs.String("agent-args", `["-ngl","99","-c","16384","-np","2"]`, "llama-server flags for L, as a JSON array")
 	imgStrata := fs.String("image-strata", "ghcr.io/niko1221/strata:0.2.7-cuda13", "image for S (load balancer); cuda13 needs driver 580+")
 	strataPool := fs.String("strata-pool", "AMPERE_48", "GPU pool for S; IQ2_XS needs about 39 GB of VRAM and host RAM combined")
@@ -132,6 +134,23 @@ func cmdUp(ctx context.Context, args []string) error {
 	}
 	if tok := os.Getenv("HF_TOKEN"); tok != "" {
 		agentEnv["HF_TOKEN"] = tok
+	}
+
+	// Our Strata image: the agent downloads the shards, Strata's own settings
+	// stay plain environment variables.
+	strataRepo := "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF"
+	strataShard := *strataModel + "/Qwen3.8-Flash-Next-GSQ-RCO-" + *strataModel + "-%05d-of-00002.gguf"
+	strataFiles, _ := json.Marshal([]map[string]string{
+		{"role": "model", "repo": strataRepo, "file": fmt.Sprintf(strataShard, 1)},
+		{"role": "model", "repo": strataRepo, "file": fmt.Sprintf(strataShard, 2)},
+	})
+	agentStrataEnv := map[string]string{
+		"PORT": "8080", "PORT_HEALTH": "8080",
+		"FAMILY": *strataFamily, "MODEL": *strataModel,
+		"AGENT_FILES": string(strataFiles), "AGENT_COLD_START_SECONDS": "1500",
+	}
+	if tok := os.Getenv("HF_TOKEN"); tok != "" {
+		agentStrataEnv["HF_TOKEN"] = tok
 	}
 
 	specs := map[string]struct {
@@ -223,6 +242,23 @@ func cmdUp(ctx context.Context, args []string) error {
 				Timeout: 300000, Flashboot: *flashboot,
 			},
 		},
+		"t": {
+			note: "load balancer + our Strata image (agent entrypoint, prebuilt draft layer)",
+			req: manage.CreateEndpointRequest{
+				Name: namePrefix + "t-lb-agent-strata" + *suffix,
+				Type: manage.TypeLoadBalancer,
+				Container: manage.Container{
+					Image: *imgAgentStrata,
+					Disk:  *strataDisk,
+					Env:   agentStrataEnv,
+					Ports: []string{"8080/http"},
+				},
+				GPU:     &manage.GPUConfig{Pools: strings.Split(*strataPool, ","), ExcludedTypes: excluded, Count: 1, MinCudaVersion: "13.0"},
+				Workers: &manage.Workers{Min: intPtr(0), Max: intPtr(1), IdleTimeout: intPtr(*idle), InitTimeout: intPtr(14400)},
+				Scaling: manage.Scaling{Type: manage.ScalingRequestCount, RequestCount: 4},
+				Timeout: 300000, Flashboot: *flashboot,
+			},
+		},
 		"d": {
 			note: "download benchmark worker (aria2c vs hf vs curl)",
 			req: manage.CreateEndpointRequest{
@@ -298,7 +334,7 @@ func cmdUp(ctx context.Context, args []string) error {
 		key = strings.TrimSpace(key)
 		spec, ok := specs[key]
 		if !ok {
-			return fmt.Errorf("unknown endpoint %q (a, b, c, d, l or s)", key)
+			return fmt.Errorf("unknown endpoint %q (a, b, c, d, l, s or t)", key)
 		}
 		if existing, ok := st.Targets[key]; ok {
 			if _, err := mc.GetEndpoint(ctx, existing.ID); err == nil {

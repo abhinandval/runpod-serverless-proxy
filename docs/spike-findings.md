@@ -1,9 +1,8 @@
 # Spike findings
 
-Status: **mostly measured** on 2026-11-19. Queue and load-balancer behaviour is
-measured for vLLM, and llama.cpp and Strata are both confirmed working on a load
-balancer. A Claude Code session, `/runsync` expiry and the rollout probe are
-still open.
+Status: **measured** on 2026-11-19. Queue and load-balancer behaviour is measured
+for vLLM; llama.cpp and Strata are confirmed working on a load balancer; a
+Claude Code session ran against Strata. Two minor items remain open (below).
 
 ## Environment
 
@@ -29,6 +28,9 @@ still open.
 | b | LB non-stream (repeat) | 103.0 s | n/a | 200 |
 | c | LB non-stream, 17.7 GB model | 87 s | n/a | 200 (model download about 43 s, load 5 s) |
 
+| a | `/openai/v1` non-stream (later run) | 81.5 s | n/a | 200 |
+| a | `/openai/v1` non-stream, first request after an image change | 111.1 s | n/a | 200, no edge timeout |
+| b | LB, 8 parallel streams | about 80 s each | about 80 s | all 200, served by one worker |
 | s | LB non-stream, Strata IQ2_XS | 734 s in total | n/a | two `400 timed out waiting for worker` (300 s each), then 200 on the third attempt |
 
 Timeline of the Strata cold start (container start to ready: **11 min 46 s**):
@@ -64,14 +66,19 @@ Timeline of the cold queue request (`a`): workers allocated and idle by about
 | Question | Answer |
 | --- | --- |
 | Does `/openai/v1` bypass the queue? | **No.** Queue `/health` showed `inQueue: 1` for the whole cold wait. The worker README's "bypasses the queue" claim is wrong for this route. |
-| Edge timeout on cold requests | **Not hit for streaming.** Headers arrive in 0.5 s and the stream survived 175 s with no bytes and no keep-alives. Not yet tested for non-streaming on the queue route. |
+| Edge timeout on cold requests | **Not observed.** A streaming request got headers in 0.5 s and survived 175 s with no bytes and no keep-alives. A non-streaming request on the queue route waited 111 s with no response at all and still returned 200, so the reported 100 s cutoff did not apply. The load balancer's own limit is 300 s. |
 | Cold load balancer behaviour | **It waits, it does not fail fast.** The request is held with no response bytes at all until a worker is healthy. With no healthy worker it returns `400 {"detail":"timed out waiting for worker"}` after about **300 s** (docs say 2 minutes). |
 | Latency added by `/stream` polling | Small when warm: 1.4 s end to end vs 1.3 s direct. Each poll takes 200 to 400 ms and returns a batch. |
 | `/stream` chunk shape | Each item is `{"output": "<raw SSE text>"}`: several `data: {...}\n\n` lines concatenated. The `openai_route` job shape and the worker's native shape produce identical output. |
 | `/status-sync` | Not useful: with `wait=30000` it held the call for the full 30 s although the job finished in under 1 s. |
 | Anthropic `/messages` fidelity (vLLM) | Correct event order (`message_start` ... `message_delta` with stop reason and usage ... `message_stop`), proper `tool_use` blocks with streamed `input_json_delta`. Works on both the queue route and the load balancer. No `ping` events are sent. |
+| FlashBoot | After the worker had scaled down for 150 s, a `/runsync` request completed in 2.9 s with `delayTime` 1.6 s: FlashBoot restored a worker in under two seconds. First starts and starts after an image change are still full cold starts. |
+| Rollout on image change | `PATCH image` moved the endpoint from version 1 to 2 at once. Standby workers were replaced progressively with no traffic: 0, 29, 43 then 57 percent on the latest version within 100 s. The next request waited 111 s for a worker on the new image. |
+| Claude Code | A headless session against the Strata endpoint (base URL = the load balancer URL, auth token = the RunPod inference key) completed a task using the Bash and Read tools in 3 turns and 3.7 s. Claude Code prints an `unrecognized_model` notice for the custom model name; it is harmless. |
+| Billing of standby workers | Day totals from `/billing/serverless` match the time workers were actually running; the extra `IDLE`, `INITIALIZING` and `THROTTLED` worker records do not appear to be billed. Billing data lags, so re-check the next day. |
+| Docker HEALTHCHECK | RunPod runs the image's own `HEALTHCHECK` (seen as periodic `/v1/models` calls inside the Strata container), separately from the load balancer's `/ping` polling. |
 | Concurrency | 8 parallel requests on `a` all succeeded within 1.7 s; one worker ran 4 jobs at once. |
-| Client disconnect | Work stops: the job left in-progress within about 3 s of the drop (full generation would have taken about 20 s). RunPod counts it as completed, not cancelled. |
+| Client disconnect | On the queue endpoint, work stops: the job left in-progress within about 3 s of the drop (full generation would have taken about 20 s). RunPod counts it as completed, not cancelled. On a load balancer the worker state gives no signal either way (the worker just idled out after its timeout), so this is unconfirmed there. |
 | Health path on load balancers | **RunPod polls `GET /ping` and ignores `HEALTH_CHECK_PATH`**, even though the endpoint's `requestUrls.health` echoes the configured path. vLLM's access log shows only `/ping` polls. An engine without `/ping` never becomes healthy. |
 | Unhealthy load-balancer workers | **They keep running and billing.** A worker that never passed its health check stayed `RUNNING` for over 10 minutes; the idle timeout did not apply. |
 | Worker counts | The management API listed 5 to 7 worker records for endpoints with max workers 2, spread over several data centres, mostly `INITIALIZING`, `THROTTLED` or `IDLE` with no uptime. Whether any of these standby records are billed is unconfirmed. |
@@ -90,11 +97,10 @@ Timeline of the cold queue request (`a`): workers allocated and idle by about
 
 ### Still open
 
-- A Claude Code session against an endpoint.
-- `/runsync` when the wait expires during a cold start; non-streaming cold request on the queue route.
-- Rollout behaviour on an image change while workers are serving.
-- Burst and disconnect on the load balancer.
-- Whether standby worker records are billed (compare `/billing/serverless` with the timeline).
+- `/runsync` when the wait expires before the job finishes: the test job completed
+  inside the minimum 1 s wait, so the expiry path was not exercised.
+- Whether a client disconnect stops generation on a load balancer (check engine logs).
+- Scale-out to a second worker under sustained load.
 
 ## Decisions
 

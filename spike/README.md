@@ -36,6 +36,7 @@ mise run probe -- up -pool <POOL>
 | `a` | queue | official `worker-vllm` | `/run`, `/runsync`, `/openai/v1` routes |
 | `b` | load balancer | stock `vllm/vllm-openai` | direct HTTP, same engine as `a` |
 | `c` | load balancer | stock llama.cpp server | second engine; serves `/ping` as a static file because RunPod polls `/ping` |
+| `s` | load balancer | stock Strata image | third engine, created with `up -only s`; a shim answers `/ping` and injects Strata's API key. No network volume, so every cold start downloads about 70 GB |
 
 ```bash
 mise run probe -- status

@@ -29,7 +29,7 @@ var weatherParams = map[string]any{
 
 func openAIChatBody(stream, tools bool, maxTokens int) map[string]any {
 	prompt := plainPrompt
-	body := map[string]any{"model": servedModel, "max_tokens": maxTokens, "stream": stream}
+	body := map[string]any{"model": requestModel, "max_tokens": maxTokens, "stream": stream}
 	if tools {
 		prompt = toolPrompt
 		body["tools"] = []any{map[string]any{"type": "function", "function": map[string]any{
@@ -45,7 +45,7 @@ func openAIChatBody(stream, tools bool, maxTokens int) map[string]any {
 
 func anthropicBody(stream, tools bool, maxTokens int) map[string]any {
 	prompt := plainPrompt
-	body := map[string]any{"model": servedModel, "max_tokens": maxTokens, "stream": stream}
+	body := map[string]any{"model": requestModel, "max_tokens": maxTokens, "stream": stream}
 	if tools {
 		prompt = toolPrompt
 		body["tools"] = []any{map[string]any{
@@ -116,7 +116,12 @@ func startSampler(ctx context.Context, rec *recorder, t target, ic *infer.Client
 	return func() { cancel(); <-done }, nil
 }
 
+// requestModel is the model name sent in request bodies; -model overrides it for
+// engines that pick their own name (Strata).
+var requestModel = servedModel
+
 type common struct {
+	model  *string
 	target *string
 	label  *string
 	watch  *bool
@@ -125,6 +130,7 @@ type common struct {
 
 func commonFlags(fs *flag.FlagSet) common {
 	return common{
+		model:  fs.String("model", servedModel, "model name to send in the request body"),
 		target: fs.String("target", "a", "test endpoint: a, b or c"),
 		label:  fs.String("label", "", "free-form label for this run, e.g. cold or warm"),
 		watch:  fs.Bool("watch", true, "sample health and workers during the run"),
@@ -134,6 +140,7 @@ func commonFlags(fs *flag.FlagSet) common {
 
 // setup resolves the target, opens a recorder and optionally starts the sampler.
 func setup(ctx context.Context, probe string, c common) (target, *recorder, *infer.Client, func(), error) {
+	requestModel = *c.model
 	st, err := loadState()
 	if err != nil {
 		return target{}, nil, nil, nil, err

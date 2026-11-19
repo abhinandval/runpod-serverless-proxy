@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	_ "embed"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,6 +16,12 @@ import (
 
 	"runpod-serverless-proxy/internal/runpod/manage"
 )
+
+// strataShim runs inside the Strata container, in front of the engine. The
+// docstring of strata_shim.py explains why it is needed.
+//
+//go:embed strata_shim.py
+var strataShim string
 
 // ---- catalog ----
 
@@ -58,10 +67,22 @@ func cmdUp(ctx context.Context, args []string) error {
 	imgWorker := fs.String("image-worker-vllm", "runpod/worker-v1-vllm:v2.31.0", "image for A (queue)")
 	imgVLLM := fs.String("image-vllm", "vllm/vllm-openai:latest", "image for B (load balancer)")
 	imgLlama := fs.String("image-llamacpp", "ghcr.io/ggml-org/llama.cpp:server-cuda", "image for C (load balancer)")
+	imgStrata := fs.String("image-strata", "ghcr.io/niko1221/strata:0.2.7-cuda13", "image for S (load balancer); cuda13 needs driver 580+")
+	strataPool := fs.String("strata-pool", "AMPERE_48", "GPU pool for S; IQ2_XS needs about 39 GB of VRAM and host RAM combined")
+	strataFamily := fs.String("strata-family", "qwen", "Strata FAMILY")
+	strataModel := fs.String("strata-model", "IQ2_XS", "Strata MODEL size")
+	strataDisk := fs.Int("strata-disk", 200, "container disk in GB for S; the model is downloaded on every cold start")
 	fs.Parse(args)
-	if *pool == "" {
-		return errors.New("-pool is required: run `probe catalog` and pick a pool with enough VRAM (16 GB is plenty)")
+	if *pool == "" && strings.TrimSpace(strings.ToLower(*only)) != "s" {
+		return errors.New("-pool is required: run `probe catalog` and pick a pool with 24 GB of VRAM")
 	}
+	// Strata insists on an API key of its own. Callers never see it: the shim
+	// injects it, and RunPod's key guards the endpoint from outside.
+	keyBytes := make([]byte, 24)
+	if _, err := rand.Read(keyBytes); err != nil {
+		return err
+	}
+	strataKey := hex.EncodeToString(keyBytes)
 	pools := strings.Split(*pool, ",")
 
 	rec, err := newRecorder("up", "", "")
@@ -151,6 +172,38 @@ func cmdUp(ctx context.Context, args []string) error {
 				Timeout: 300000, Flashboot: *flashboot,
 			},
 		},
+		"s": {
+			note: "load balancer + Strata behind a /ping and auth shim, no network volume",
+			req: manage.CreateEndpointRequest{
+				Name: namePrefix + "s-lb-strata",
+				Type: manage.TypeLoadBalancer,
+				Container: manage.Container{
+					Image: *imgStrata,
+					Disk:  *strataDisk,
+					// Start the shim on the public port, then run Strata's own
+					// entrypoint on a private port. Strata opens its port only
+					// once the model is downloaded, prepared and loaded.
+					Entrypoint: []string{"/bin/sh", "-c"},
+					Cmd: []string{
+						`PY=/opt/strata/terminal/python/bin/python3; [ -e "$PY" ] || PY=python3; ` +
+							`printf '%s' "$SHIM_PY" > /tmp/shim.py; "$PY" /tmp/shim.py & ` +
+							`export PORT=8090; exec /opt/strata/entrypoint.sh run`,
+					},
+					Env: map[string]string{
+						"PORT": "8080", "PORT_HEALTH": "8080",
+						"SHIM_PORT": "8080", "SHIM_UPSTREAM_PORT": "8090", "SHIM_PY": strataShim,
+						"FAMILY": *strataFamily, "MODEL": *strataModel, "API_KEY": strataKey,
+					},
+					Ports: []string{"8080/http"},
+				},
+				GPU: &manage.GPUConfig{Pools: strings.Split(*strataPool, ","), Count: 1, MinCudaVersion: "13.0"},
+				// One worker, a long idle timeout and the maximum init timeout: a
+				// cold start downloads about 70 GB before the engine can answer.
+				Workers: &manage.Workers{Min: intPtr(0), Max: intPtr(1), IdleTimeout: intPtr(300), InitTimeout: intPtr(14400)},
+				Scaling: manage.Scaling{Type: manage.ScalingRequestCount, RequestCount: 4},
+				Timeout: 300000, Flashboot: *flashboot,
+			},
+		},
 	}
 
 	st, _ := loadState()
@@ -175,7 +228,7 @@ func cmdUp(ctx context.Context, args []string) error {
 		key = strings.TrimSpace(key)
 		spec, ok := specs[key]
 		if !ok {
-			return fmt.Errorf("unknown endpoint %q (a, b or c)", key)
+			return fmt.Errorf("unknown endpoint %q (a, b, c or s)", key)
 		}
 		if existing, ok := st.Targets[key]; ok {
 			if _, err := mc.GetEndpoint(ctx, existing.ID); err == nil {

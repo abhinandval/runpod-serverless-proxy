@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"runpod-serverless-proxy/internal/runpod/manage"
+	"github.com/abhinandval/runpod-serverless-proxy/internal/runpod/manage"
 )
 
 // strataShim runs inside the Strata container, in front of the engine. The

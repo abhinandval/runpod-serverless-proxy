@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"runpod-serverless-proxy/internal/runpod/infer"
-	"runpod-serverless-proxy/internal/runpod/manage"
+	"github.com/abhinandval/runpod-serverless-proxy/internal/runpod/infer"
+	"github.com/abhinandval/runpod-serverless-proxy/internal/runpod/manage"
 )
 
 // ---- request payloads ----

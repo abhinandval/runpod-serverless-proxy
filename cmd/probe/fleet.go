@@ -54,7 +54,7 @@ func cmdUp(ctx context.Context, args []string) error {
 	idle := fs.Int("idle-timeout", 30, "seconds before an idle worker scales down")
 	flashboot := fs.String("flashboot", "FLASHBOOT", "OFF | FLASHBOOT | PRIORITY_FLASHBOOT")
 	hfModel := fs.String("model", "Qwen/Qwen2.5-1.5B-Instruct", "Hugging Face model for the vLLM endpoints")
-	ggufModel := fs.String("gguf", "Qwen/Qwen2.5-1.5B-Instruct-GGUF:Q4_K_M", "Hugging Face GGUF repo:quant for llama.cpp")
+	ggufModel := fs.String("gguf", "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL", "Hugging Face GGUF repo:quant for llama.cpp (17.7 GB, needs 24 GB VRAM)")
 	imgWorker := fs.String("image-worker-vllm", "runpod/worker-v1-vllm:v2.31.0", "image for A (queue)")
 	imgVLLM := fs.String("image-vllm", "vllm/vllm-openai:latest", "image for B (load balancer)")
 	imgLlama := fs.String("image-llamacpp", "ghcr.io/ggml-org/llama.cpp:server-cuda", "image for C (load balancer)")
@@ -117,7 +117,8 @@ func cmdUp(ctx context.Context, args []string) error {
 						"--host", "0.0.0.0", "--port", "8000", "--max-model-len", "8192",
 						"--enable-auto-tool-choice", "--tool-call-parser", "hermes",
 					},
-					Env:   map[string]string{"PORT": "8000", "PORT_HEALTH": "8000", "HEALTH_CHECK_PATH": "/health"},
+					// vLLM serves /ping itself, which is what RunPod polls.
+					Env:   map[string]string{"PORT": "8000", "PORT_HEALTH": "8000"},
 					Ports: []string{"8000/http"},
 				},
 				GPU: gpu(), Workers: workers(),
@@ -132,13 +133,17 @@ func cmdUp(ctx context.Context, args []string) error {
 				Type: manage.TypeLoadBalancer,
 				Container: manage.Container{
 					Image: *imgLlama,
-					Disk:  20,
+					Disk:  40,
+					// RunPod's load balancer polls GET /ping and ignores
+					// HEALTH_CHECK_PATH (measured in the spike). llama-server has no
+					// /ping route, so serve one as a static file via --path.
+					Entrypoint: []string{"/bin/sh", "-c"},
 					Cmd: []string{
-						"-hf", *ggufModel, "--alias", servedModel,
-						"--host", "0.0.0.0", "--port", "8080", "--jinja",
-						"-ngl", "99", "-c", "8192", "-np", "4",
+						"mkdir -p /tmp/pub && echo ok > /tmp/pub/ping && exec /app/llama-server" +
+							" -hf " + *ggufModel + " --alias " + servedModel +
+							" --host 0.0.0.0 --port 8080 --path /tmp/pub --jinja -ngl 99 -c 16384 -np 2",
 					},
-					Env:   map[string]string{"PORT": "8080", "PORT_HEALTH": "8080", "HEALTH_CHECK_PATH": "/health"},
+					Env:   map[string]string{"PORT": "8080", "PORT_HEALTH": "8080"},
 					Ports: []string{"8080/http"},
 				},
 				GPU: gpu(), Workers: workers(),

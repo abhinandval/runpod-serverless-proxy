@@ -9,7 +9,8 @@ contradicts. This spike measures them on real endpoints. Results go into
 - Endpoints are created with **min workers 0**, so nothing is billed while idle.
   Workers bill per second from start (including model download and load) until
   they scale down after the idle timeout (30 s by default).
-- The model is small (Qwen2.5 1.5B Instruct), so any 16 GB+ pool is enough.
+- The vLLM targets use a small model (Qwen2.5 1.5B Instruct). The llama.cpp target
+  loads Qwen3.8-27B (17.7 GB), so use a pool with 24 GB of VRAM.
 - `probe down` deletes only endpoints tagged `managed-by=rsp-spike`, named
   `rsp-spike-*`, or listed in `spike/state.json`. Run it when you finish, and confirm in the RunPod console.
 
@@ -34,7 +35,7 @@ mise run probe -- up -pool <POOL>
 | --- | --- | --- | --- |
 | `a` | queue | official `worker-vllm` | `/run`, `/runsync`, `/openai/v1` routes |
 | `b` | load balancer | stock `vllm/vllm-openai` | direct HTTP, same engine as `a` |
-| `c` | load balancer | stock llama.cpp server | checks that any engine works unmodified |
+| `c` | load balancer | stock llama.cpp server | second engine; serves `/ping` as a static file because RunPod polls `/ping` |
 
 ```bash
 mise run probe -- status

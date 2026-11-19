@@ -172,6 +172,26 @@ variables, polled through the load balancer from a cold start.
 - RunPod routed to the agent during the download, which confirms the
   early-`/ping` design; a request before ready would get the agent's 503.
 
+### Gateway end to end (local gateway, llama.cpp unit on RunPod)
+
+The gateway ran on a laptop against a cold unit (RTX A5000, our llama.cpp image,
+Qwen3.8-27B, 32k context).
+
+- **Cold streaming request:** `200` and SSE headers at once, a keep-alive every
+  10 s (5 in total), first model output at 52.9 s, finished at 54.0 s. The client
+  saw one uninterrupted stream.
+- **Warm non-streaming request:** 1.3 s.
+- **Claude Code through the gateway:** a headless session using the Bash and
+  Read tools completed in 3 turns and 31 s with the correct answer.
+- **Claude Code sends system-role messages inside `messages`**, next to the
+  top-level `system` field. llama.cpp passes them to the chat template, and
+  Qwen's template rejects them (`500 System message must be at the beginning`).
+  The gateway now rewrites them, for llama.cpp units, into user messages wrapped
+  in `<system-reminder>` tags, kept in place so the prompt cache still applies.
+  Strata accepted the same requests unchanged.
+- The model needs a context larger than Claude Code's roughly 12k-token prompt:
+  the unit ran with `-c 32768 -np 1`.
+
 ## Decisions
 
 - **Primary endpoint type: load balancer.** It needs no handler code, works with

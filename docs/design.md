@@ -221,6 +221,16 @@ received -> waking -> waiting_for_unit -> streaming -> completed
 
 Retries happen only before the first upstream byte reaches the client.
 
+### Engine quirks
+
+The gateway passes requests through unchanged, with small per-engine fixes
+where an engine's API layer and a real client disagree. So far there is one:
+for llama.cpp units, Anthropic messages with role `system` in the middle of a
+conversation (Claude Code sends these) become user messages wrapped in
+`<system-reminder>` tags, because the model's chat template rejects them
+otherwise. They stay in place, not hoisted into `system`, to keep the prompt
+cache valid.
+
 ## Live state and records
 
 - **Live state is in memory:** units (state, phase, workers, in-flight count)

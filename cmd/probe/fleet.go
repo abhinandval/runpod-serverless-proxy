@@ -75,6 +75,7 @@ func cmdUp(ctx context.Context, args []string) error {
 	imgVLLM := fs.String("image-vllm", "vllm/vllm-openai:latest", "image for B (load balancer)")
 	imgLlama := fs.String("image-llamacpp", "ghcr.io/ggml-org/llama.cpp:server-cuda", "image for C (load balancer)")
 	imgAgentLlama := fs.String("image-agent-llamacpp", "ghcr.io/abhinandval/runpod-serverless-proxy/llamacpp:latest", "our llama.cpp image for L (load balancer)")
+	agentArgs := fs.String("agent-args", `["-ngl","99","-c","16384","-np","2"]`, "llama-server flags for L, as a JSON array")
 	imgStrata := fs.String("image-strata", "ghcr.io/niko1221/strata:0.2.7-cuda13", "image for S (load balancer); cuda13 needs driver 580+")
 	strataPool := fs.String("strata-pool", "AMPERE_48", "GPU pool for S; IQ2_XS needs about 39 GB of VRAM and host RAM combined")
 	strataFamily := fs.String("strata-family", "qwen", "Strata FAMILY")
@@ -127,7 +128,7 @@ func cmdUp(ctx context.Context, args []string) error {
 		"PORT": "8080", "PORT_HEALTH": "8080",
 		"AGENT_MODEL_NAME":  servedModel,
 		"AGENT_FILES":       `[{"role":"model","repo":"unsloth/Qwen3.8-27B-GGUF","file":"Qwen3.8-27B-UD-Q4_K_XL.gguf"}]`,
-		"AGENT_ENGINE_ARGS": `["-ngl","99","-c","16384","-np","2"]`,
+		"AGENT_ENGINE_ARGS": *agentArgs,
 	}
 	if tok := os.Getenv("HF_TOKEN"); tok != "" {
 		agentEnv["HF_TOKEN"] = tok

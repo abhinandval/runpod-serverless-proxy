@@ -1,0 +1,32 @@
+# All runtimes and tools for this repo are managed by mise (https://mise.jdx.dev).
+# Setup: `mise trust && mise install`. Add further runtimes here as the project grows.
+
+[tools]
+go = "1.26"
+
+[env]
+# Local secrets (git-ignored). See .env.example.
+_.file = ".env"
+
+[tasks.build]
+description = "Compile every package"
+run = "go build ./..."
+
+[tasks.test]
+description = "Run unit tests"
+run = "go test ./..."
+
+[tasks.fmt]
+description = "Format Go sources"
+run = "gofmt -w ."
+
+[tasks.lint]
+description = "Vet and check formatting"
+run = [
+  "go vet ./...",
+  "test -z \"$(gofmt -l .)\" || (gofmt -l . && echo 'run: mise run fmt' && exit 1)",
+]
+
+[tasks.probe]
+description = "Run the spike probe CLI, e.g. `mise run probe -- catalog`"
+run = "go run ./cmd/probe"

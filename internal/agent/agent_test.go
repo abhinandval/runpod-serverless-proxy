@@ -26,6 +26,7 @@ func (e *fakeEngine) Command(_ context.Context, p map[Role][]string) (*exec.Cmd,
 	return exec.Command("true"), nil
 }
 func (e *fakeEngine) Ready(context.Context) bool { return e.ready.Load() }
+func (e *fakeEngine) Authorize(r *http.Request)  { r.Header.Set("Authorization", "Bearer engine-key") }
 
 // fakeDownloader writes a small file per request instead of calling the Hub.
 type fakeDownloader struct {
@@ -57,7 +58,7 @@ func newTestAgent(t *testing.T, eng *fakeEngine, dl Downloader, files []File) (*
 		ModelName: "m", WorkerID: "w1", StatusEvery: 5 * time.Millisecond}
 	a := New(cfg, eng, dl, engineTransport(func(r *http.Request) (*http.Response, error) {
 		body := "data: one\n\ndata: two\n\n"
-		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}, "X-Seen-Path": {r.URL.Path}},
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}, "X-Seen-Path": {r.URL.Path}, "X-Seen-Auth": {r.Header.Get("Authorization")}},
 			Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 	}))
 	exited := make(chan error, 1)
@@ -115,6 +116,10 @@ func TestLifecycleFromColdToReady(t *testing.T) {
 	rec = get(a, "/v1/chat/completions")
 	if rec.Code != 200 || rec.Header().Get("X-Seen-Path") != "/v1/chat/completions" || !strings.Contains(rec.Body.String(), "data: two") {
 		t.Errorf("proxied response = %d %q", rec.Code, rec.Body.String())
+	}
+	// The engine's own credentials replace the caller's on the way in.
+	if got := rec.Header().Get("X-Seen-Auth"); got != "Bearer engine-key" {
+		t.Errorf("engine saw Authorization %q", got)
 	}
 
 	st := a.Status()

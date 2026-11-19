@@ -17,6 +17,10 @@ type Engine interface {
 	Command(ctx context.Context, paths map[Role][]string) (*exec.Cmd, error)
 	// Ready reports whether the engine can answer requests on its private port.
 	Ready(ctx context.Context) bool
+	// Authorize adjusts a request that is about to be proxied to the engine,
+	// for engines that want credentials of their own. The caller was already
+	// authenticated by RunPod's load balancer.
+	Authorize(r *http.Request)
 }
 
 // EngineConfig is what every engine needs from the agent's configuration.
@@ -32,6 +36,8 @@ func NewEngine(name string, cfg EngineConfig) (Engine, error) {
 	switch name {
 	case "llama.cpp", "llamacpp":
 		return &llamaCpp{cfg: cfg, bin: "/app/llama-server", http: &http.Client{Timeout: 3 * time.Second}}, nil
+	case "strata":
+		return newStrata(cfg)
 	}
 	return nil, fmt.Errorf("unknown engine %q", name)
 }
@@ -44,6 +50,9 @@ type llamaCpp struct {
 }
 
 func (e *llamaCpp) Name() string { return "llama.cpp" }
+
+// Authorize does nothing: llama-server runs without a key on loopback.
+func (e *llamaCpp) Authorize(*http.Request) {}
 
 func (e *llamaCpp) Command(ctx context.Context, paths map[Role][]string) (*exec.Cmd, error) {
 	models := paths[RoleModel]

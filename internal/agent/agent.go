@@ -152,6 +152,7 @@ func (a *Agent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	a.inFlight.Add(1)
 	defer a.inFlight.Add(-1)
+	a.engine.Authorize(r)
 	a.proxy.ServeHTTP(w, r)
 }
 

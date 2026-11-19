@@ -256,3 +256,42 @@ func TestClientDisconnectStopsWaiting(t *testing.T) {
 		t.Fatal("handler kept waiting after the client went away")
 	}
 }
+
+func TestSystemMessagesInsideAnthropicConversationAreDemoted(t *testing.T) {
+	f := &fakeUnit{}
+	g := newTestGateway(t, f)
+	body := `{"model":"qwen","system":[{"type":"text","text":"top"}],"messages":[
+		{"role":"user","content":[{"type":"text","text":"hi"}]},
+		{"role":"system","content":[{"type":"text","text":"mid","cache_control":{"type":"ephemeral"}}]},
+		{"role":"system","content":"plain"}]}`
+	if rec := do(g, "POST", "/v1/messages", "gw-key", body); rec.Code != 200 {
+		t.Fatalf("got %d %s", rec.Code, rec.Body)
+	}
+	got := plainJSON(f.requests[0])
+	if strings.Contains(got, `"role":"system"`) {
+		t.Errorf("a system-role message was forwarded: %s", got)
+	}
+	for _, want := range []string{"<system-reminder>\\nmid\\n</system-reminder>", "<system-reminder>\\nplain\\n</system-reminder>", `"system":[{"text":"top"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("forwarded body is missing %s: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "cache_control") {
+		t.Errorf("cache_control was kept on a rewritten block: %s", got)
+	}
+
+	// OpenAI requests are left alone: a system message there is ordinary.
+	do(g, "POST", "/v1/chat/completions", "gw-key", `{"model":"qwen","messages":[{"role":"user","content":"a"},{"role":"system","content":"b"}]}`)
+	if got := plainJSON(f.requests[1]); !strings.Contains(got, `"role":"system"`) {
+		t.Errorf("OpenAI request was rewritten: %s", got)
+	}
+}
+
+// plainJSON encodes without escaping < and >, so tests can match tags as written.
+func plainJSON(v any) string {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	enc.Encode(v)
+	return b.String()
+}

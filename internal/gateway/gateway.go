@@ -52,7 +52,7 @@ func New(cfg *config.Config, transport http.RoundTripper) (*Gateway, error) {
 		if uc.BaseURL() == "" {
 			return nil, fmt.Errorf("unit %s has no endpoint_id or url yet", name)
 		}
-		units[name] = &unit{name: name, baseURL: uc.BaseURL(),
+		units[name] = &unit{name: name, engine: uc.Engine, baseURL: uc.BaseURL(),
 			coldStart: time.Duration(uc.Timeouts.ColdStart), request: time.Duration(uc.Timeouts.Request)}
 	}
 	for name, m := range cfg.Models {
@@ -140,6 +140,10 @@ func (g *Gateway) handle(w http.ResponseWriter, r *http.Request, api apiKind) {
 	}
 	var stream bool
 	json.Unmarshal(fields["stream"], &stream)
+
+	if api == apiAnthropic && u.engine == "llama.cpp" {
+		demoteSystemMessages(fields)
+	}
 
 	ctx := r.Context()
 	out := &relay{w: w, api: api, stream: stream}

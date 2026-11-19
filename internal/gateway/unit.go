@@ -16,6 +16,7 @@ import (
 // reads and writes only this in-memory state.
 type unit struct {
 	name      string
+	engine    string
 	baseURL   string
 	coldStart time.Duration
 	request   time.Duration

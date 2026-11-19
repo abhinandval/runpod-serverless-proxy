@@ -132,20 +132,24 @@ availability as low.
 
 One RTX A5000 worker (96 host cores, container disk) downloaded the same 17.7 GB
 file (`unsloth/Qwen3.8-27B-GGUF`, UD-Q4_K_XL) with each tool, in the order
-shown, without a Hugging Face token. `cmd/probe/dlbench.py` is the harness.
+shown, first without and then with a Hugging Face token (a different worker of
+the same type). `cmd/probe/dlbench.py` is the harness. Seconds, two runs each:
 
-| Tool | Run 1 | Run 2 |
+| Tool | No token | With token |
 | --- | --- | --- |
-| `aria2c` 1.37, 16 connections | 32.4 s (545 MB/s) | 40.1 s (441 MB/s) |
-| `hf download` 2.4.0 (Xet) | 36.4 s (485 MB/s) | 17.0 s (1,041 MB/s) |
-| `hf download` with `HF_XET_HIGH_PERFORMANCE=1` | 15.0 s (1,179 MB/s) | 16.0 s (1,107 MB/s) |
-| `curl`, one stream | 72.2 s (245 MB/s) | not run |
+| `aria2c` 1.37, 16 connections | 32.4, 40.1 | 34.3, 40.1 |
+| `hf download` 2.4.0 (Xet) | 36.4, 17.0 | 21.0, 19.7 |
+| `hf download` with `HF_XET_HIGH_PERFORMANCE=1` | 15.0, 16.0 | 15.3, 15.0 |
+| `curl`, one stream | 72.2 | 110.9 |
 
 - The Hugging Face CLI in high-performance mode is the fastest and the most
-  consistent, a little over twice as fast as `aria2c`.
-- Plain `hf download` varied by a factor of two between runs; two samples are
-  not enough to say why.
-- Not yet run with a token, and not yet tried on a worker with fewer cores.
+  consistent: about 15 s (roughly 1.15 GB/s), a little over twice as fast as
+  `aria2c` (about 0.45 to 0.55 GB/s) in all four of its runs.
+- The token makes no difference to speed for a public file; it is needed only
+  for gated or private repositories.
+- Plain `hf download` ranged from 17 to 36 s; high-performance mode removes
+  that variance.
+- Not tried on a worker with fewer host cores.
 
 ## Decisions
 
@@ -166,6 +170,8 @@ shown, without a Hugging Face token. `cmd/probe/dlbench.py` is the harness.
   prefix plus stored ids; tags are optional.
 - **Startup key check:** verify that the inference key can reach each endpoint
   and the management key can read logs, and report scope problems clearly.
+- **Downloader: the Hugging Face CLI with `HF_XET_HIGH_PERFORMANCE=1`,** run by
+  the agent. It needs Python in every engine image.
 - **Model weights: download at start, no network volume.** Decided by the
   project owner; the cold-start delay is accepted. Measured cost: under a minute
   for a 17.7 GB GGUF, about 12 minutes for Strata IQ2_XS, most of which is

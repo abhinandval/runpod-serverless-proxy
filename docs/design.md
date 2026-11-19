@@ -89,9 +89,13 @@ the main files only, so the agent must also place the draft layer where Strata
 looks for it, or most of the wait remains. That needs a look at Strata's data
 layout and is the main risk in this change.
 
-**Open: which downloader.** Either the agent downloads natively in Go (parallel
-ranged requests, as Strata's own downloader does), or it shells out to
-Hugging Face's `hf` CLI. To be decided by measurement on a worker.
+**Downloader: the Hugging Face CLI** (`hf download` with
+`HF_XET_HIGH_PERFORMANCE=1`), run by the agent as a child process. Measured on a
+worker it took about 15 s for 17.7 GB, against 32 to 40 s for `aria2c` and 72 to
+111 s for one `curl` stream, with or without a token. Every engine image
+therefore carries Python and `huggingface_hub`; the agent reads progress from
+the size of the files on disk against the sizes the Hub API reports, rather than
+parsing the CLI's output.
 
 **To verify first, on a real endpoint:** RunPod routes as soon as `/ping`
 returns 200, and status polls keep a worker alive through a long download.
@@ -243,7 +247,8 @@ instance or asynchronous jobs are needed.
 
 ## Open items
 
-- Which downloader the agent uses, and how to pre-place Strata's draft layer.
+- How to pre-place Strata's draft layer, and whether Strata then skips its own
+  verification pass.
 - GitHub owner and repository name (image names, Go module path).
 - Whether the early-`/ping` design holds on RunPod (first task of step 1).
 - The 5.5 minute request cap on long generations.

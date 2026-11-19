@@ -82,12 +82,35 @@ instead of each engine using its own downloader.
 - The source is a setting, so a mirror or our own bucket can replace
   Hugging Face later without touching the engines.
 
-Strata caveat: in the spike the main model download was only about 2 of its 10
-to 12 minutes. The rest was Strata verifying the files (about 2.5 min),
-downloading its 5 GB draft layer (4.5 to 6 min) and loading. `MODEL_PATH` covers
-the main files only, so the agent must also place the draft layer where Strata
-looks for it, or most of the wait remains. That needs a look at Strata's data
-layout and is the main risk in this change.
+A unit can need more than the main model. Each file has a role, and the agent
+places it where the engine looks:
+
+| Role | What it is | llama.cpp | Strata |
+| --- | --- | --- | --- |
+| `model` | main weights, one file or several shards | `-m <path>` | folder passed as `MODEL_PATH` (`/models/<repo>/`) |
+| `projector` | vision projector (mmproj) | `--mmproj <path>` | `/data/Strata-data/models/mmproj-Qwen3.8-Flash-Next-BF16.gguf`, with `VISION=on` |
+| `draft` | MTP head or draft model for speculative decoding | `--spec-draft-model <path>` plus `--spec-type` (for example `draft-mtp`) | `/data/Strata-data/mtp/` (see below) |
+
+For llama.cpp all three are ordinary Hugging Face files, so `hf download` and a
+flag cover every case. Its `-hf` auto-download is not used.
+
+Strata, from reading its `terminal/setup.py` (to be confirmed on a worker):
+
+- **Main model:** files given through `MODEL_PATH` are treated as the user's own
+  and are not hash-checked, so this should remove both the download (about
+  2 min) and the verification pass (about 2.5 min) from Strata's start.
+- **Projector:** an ordinary file (0.9 GB) in
+  `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF`; setup looks for it in the data
+  folder's `models/`.
+- **Draft layer:** not a file on Hugging Face. Strata reads 31 `mtp.*` tensors
+  (about 5 GB) out of the 360 GB `Qwen/Qwen3.8-Flash-Next` checkpoint with range
+  requests, then packs them with its own tools into `mtp/mtp-q2_0.gguf` and
+  `mtp/rt/experts.bin`. Setup skips the whole step when `mtp/rt/experts.bin`
+  exists. This step was 4.5 to 6 minutes of the cold start, and `hf download`
+  cannot replace it. It is the same for every model in the family, so the
+  prepared `mtp/` folder is built once and then either baked into our Strata
+  image or published to a repository of ours and fetched like any other file.
+  `DRAFTING=off` skips it at roughly half the output speed.
 
 **Downloader: the Hugging Face CLI** (`hf download` with
 `HF_XET_HIGH_PERFORMANCE=1`), run by the agent as a child process. Measured on a
@@ -125,6 +148,8 @@ units:
       source: huggingface
       repo: unsloth/Qwen3.8-27B-GGUF
       files: ["Qwen3.8-27B-UD-Q4_K_XL.gguf"]
+      projector: {repo: unsloth/Qwen3.8-27B-GGUF, file: "mmproj-F16.gguf"}   # optional
+      draft: {repo: <org/repo>, file: "<mtp head>.gguf", spec_type: draft-mtp}   # optional
     engine_args: {ctx_size: 16384, parallel: 2}
     spec:
       gpu: {pools: [AMPERE_24], exclude_types: ["NVIDIA L4"], count: 1}
@@ -247,8 +272,9 @@ instance or asynchronous jobs are needed.
 
 ## Open items
 
-- How to pre-place Strata's draft layer, and whether Strata then skips its own
-  verification pass.
+- Strata's prepared draft layer: bake it into the image or publish it to our own
+  repository, and whether the Qwen licence allows redistributing it publicly.
+- Confirm on a worker that `MODEL_PATH` skips Strata's verification pass.
 - GitHub owner and repository name (image names, Go module path).
 - Whether the early-`/ping` design holds on RunPod (first task of step 1).
 - The 5.5 minute request cap on long generations.

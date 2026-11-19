@@ -74,6 +74,7 @@ func cmdUp(ctx context.Context, args []string) error {
 	imgWorker := fs.String("image-worker-vllm", "runpod/worker-v1-vllm:v2.31.0", "image for A (queue)")
 	imgVLLM := fs.String("image-vllm", "vllm/vllm-openai:latest", "image for B (load balancer)")
 	imgLlama := fs.String("image-llamacpp", "ghcr.io/ggml-org/llama.cpp:server-cuda", "image for C (load balancer)")
+	imgAgentLlama := fs.String("image-agent-llamacpp", "ghcr.io/abhinandval/runpod-serverless-proxy/llamacpp:latest", "our llama.cpp image for L (load balancer)")
 	imgStrata := fs.String("image-strata", "ghcr.io/niko1221/strata:0.2.7-cuda13", "image for S (load balancer); cuda13 needs driver 580+")
 	strataPool := fs.String("strata-pool", "AMPERE_48", "GPU pool for S; IQ2_XS needs about 39 GB of VRAM and host RAM combined")
 	strataFamily := fs.String("strata-family", "qwen", "Strata FAMILY")
@@ -119,6 +120,17 @@ func cmdUp(ctx context.Context, args []string) error {
 	benchEnv := map[string]string{"PORT": "8080", "PORT_HEALTH": "8080", "BENCH_PY": dlBench}
 	if tok := os.Getenv("HF_TOKEN"); tok != "" {
 		benchEnv["HF_TOKEN"] = tok
+	}
+
+	// Our own engine image: everything is configured through the agent's environment.
+	agentEnv := map[string]string{
+		"PORT": "8080", "PORT_HEALTH": "8080",
+		"AGENT_MODEL_NAME":  servedModel,
+		"AGENT_FILES":       `[{"role":"model","repo":"unsloth/Qwen3.8-27B-GGUF","file":"Qwen3.8-27B-UD-Q4_K_XL.gguf"}]`,
+		"AGENT_ENGINE_ARGS": `["-ngl","99","-c","16384","-np","2"]`,
+	}
+	if tok := os.Getenv("HF_TOKEN"); tok != "" {
+		agentEnv["HF_TOKEN"] = tok
 	}
 
 	specs := map[string]struct {
@@ -189,6 +201,23 @@ func cmdUp(ctx context.Context, args []string) error {
 					Ports: []string{"8080/http"},
 				},
 				GPU: gpu(), Workers: workers(),
+				Scaling: manage.Scaling{Type: manage.ScalingRequestCount, RequestCount: 4},
+				Timeout: 300000, Flashboot: *flashboot,
+			},
+		},
+		"l": {
+			note: "load balancer + our llama.cpp image (agent entrypoint)",
+			req: manage.CreateEndpointRequest{
+				Name: namePrefix + "l-lb-agent-llamacpp" + *suffix,
+				Type: manage.TypeLoadBalancer,
+				Container: manage.Container{
+					Image: *imgAgentLlama,
+					Disk:  40,
+					Env:   agentEnv,
+					Ports: []string{"8080/http"},
+				},
+				GPU:     gpu(),
+				Workers: &manage.Workers{Min: intPtr(0), Max: intPtr(1), IdleTimeout: intPtr(*idle), InitTimeout: intPtr(900)},
 				Scaling: manage.Scaling{Type: manage.ScalingRequestCount, RequestCount: 4},
 				Timeout: 300000, Flashboot: *flashboot,
 			},
@@ -268,7 +297,7 @@ func cmdUp(ctx context.Context, args []string) error {
 		key = strings.TrimSpace(key)
 		spec, ok := specs[key]
 		if !ok {
-			return fmt.Errorf("unknown endpoint %q (a, b, c, d or s)", key)
+			return fmt.Errorf("unknown endpoint %q (a, b, c, d, l or s)", key)
 		}
 		if existing, ok := st.Targets[key]; ok {
 			if _, err := mc.GetEndpoint(ctx, existing.ID); err == nil {

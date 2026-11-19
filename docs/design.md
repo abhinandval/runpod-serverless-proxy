@@ -23,7 +23,7 @@ instance.
 | Engines | llama.cpp and Strata |
 | Endpoint type | RunPod load balancer |
 | Images | our own, public on GitHub Container Registry |
-| Model weights | downloaded at start, no network volume |
+| Model weights | downloaded at start by the agent, the same way for every engine; no network volume |
 | Persistence | SQLite, written asynchronously; live state in memory |
 | Timeouts | per unit, with per-engine baselines |
 | Name | `runpod-serverless-proxy` for now |
@@ -56,12 +56,42 @@ The agent listens on the public port and runs the engine on a private port.
 
 Agent duties:
 
-- start the engine from environment variables rendered by the gateway;
-- derive `phase` from the engine (log lines for Strata, `/health` for llama.cpp);
+- download the model itself (see "Model download") and place the files where
+  the engine expects them, then start the engine pointing at them;
+- derive the later phases from the engine (log lines for Strata, `/health` for
+  llama.cpp);
 - exit non-zero if the engine exits or exceeds the unit's cold-start timeout, so a
   broken unit stops billing instead of running forever;
 - never see the client's credentials: RunPod authenticates the caller, the agent
   holds the engine's own key if it needs one.
+
+### Model download
+
+The agent downloads model files from Hugging Face before starting the engine,
+instead of each engine using its own downloader.
+
+- One strategy and one progress format for every engine: `downloading` is its
+  own phase with exact bytes done and total, timed and recorded separately from
+  engine loading.
+- An optional Hugging Face token (`fleet.hf_token`, passed to the unit as a
+  RunPod secret, never as a plain environment variable) allows gated and
+  private repositories and higher rate limits.
+- Files land in a fixed layout on the container disk (`/models/<repo>/<file>`),
+  and the engine is started with a local path: `-m` for llama.cpp, `MODEL_PATH`
+  for Strata.
+- The source is a setting, so a mirror or our own bucket can replace
+  Hugging Face later without touching the engines.
+
+Strata caveat: in the spike the main model download was only about 2 of its 10
+to 12 minutes. The rest was Strata verifying the files (about 2.5 min),
+downloading its 5 GB draft layer (4.5 to 6 min) and loading. `MODEL_PATH` covers
+the main files only, so the agent must also place the draft layer where Strata
+looks for it, or most of the wait remains. That needs a look at Strata's data
+layout and is the main risk in this change.
+
+**Open: which downloader.** Either the agent downloads natively in Go (parallel
+ranged requests, as Strata's own downloader does), or it shells out to
+Hugging Face's `hf` CLI. To be decided by measurement on a worker.
 
 **To verify first, on a real endpoint:** RunPod routes as soon as `/ping`
 returns 200, and status polls keep a worker alive through a long download.
@@ -80,6 +110,7 @@ fleet:
   provider: runpod
   management_key: ${env.RUNPOD_MANAGEMENT_KEY}
   inference_key:  ${env.RUNPOD_INFERENCE_KEY}
+  hf_token: ${env.HF_TOKEN}                # optional; gated or private models
   name_prefix: "rsp-"                      # ownership: prefix + stored ids (tags are optional)
 
 units:
@@ -89,7 +120,7 @@ units:
     model:
       source: huggingface
       repo: unsloth/Qwen3.8-27B-GGUF
-      file: UD-Q4_K_XL
+      files: ["Qwen3.8-27B-UD-Q4_K_XL.gguf"]
     engine_args: {ctx_size: 16384, parallel: 2}
     spec:
       gpu: {pools: [AMPERE_24], exclude_types: ["NVIDIA L4"], count: 1}
@@ -212,6 +243,7 @@ instance or asynchronous jobs are needed.
 
 ## Open items
 
+- Which downloader the agent uses, and how to pre-place Strata's draft layer.
 - GitHub owner and repository name (image names, Go module path).
 - Whether the early-`/ping` design holds on RunPod (first task of step 1).
 - The 5.5 minute request cap on long generations.

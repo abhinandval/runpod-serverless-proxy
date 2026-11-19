@@ -172,6 +172,34 @@ variables, polled through the load balancer from a cold start.
 - RunPod routed to the agent during the download, which confirms the
   early-`/ping` design; a request before ready would get the agent's 503.
 
+### Our Strata image with the agent
+
+Image `ghcr.io/abhinandval/runpod-serverless-proxy/strata` (upstream 0.2.7
+cuda13, agent entrypoint, draft layer packed at build time; CI builds it in
+about 9 minutes). One RTX A5000 worker, `FAMILY=qwen MODEL=IQ2_XS`, 200 GB
+container disk, no network volume, FlashBoot off.
+
+| Phase | Stock image (earlier run) | Our image |
+| --- | --- | --- |
+| Download model files | about 2 min 10 s | 46.6 s (68.0 GB, two shards, `hf download`) |
+| Verify the files | about 2 min 35 s | 8 s |
+| Prepare the model and the draft layer | 4.5 to 6 min | under 1 s for the draft layer (read from the image) |
+| Start the engine and load | about 35 s | about 40 s |
+| **Container start to ready** | **about 10 min** | **103 s** |
+
+- From the first request to ready took 245 s; the rest is RunPod allocating
+  the worker and pulling the image.
+- Output speed: 94 to 98 tokens/s on two 700-token completions, with the draft
+  layer active (`draft_n_accepted` about 300 of 500). The stock image gave
+  88.8 tokens/s on the same card.
+- OpenAI and Anthropic streaming both work through the agent, which swaps the
+  RunPod key for the key it generated for Strata. A call without the RunPod key
+  gets 401 from RunPod.
+- Strata accepted the pre-placed draft layer through a symlink and logged that
+  it reads it from `/opt/strata-draft`.
+- With `MODEL_PATH`, Strata did not run its long SHA-256 pass on these files:
+  that pass only applies to the files it pins by hash (the Unsloth ones).
+
 ### Gateway end to end (local gateway, llama.cpp unit on RunPod)
 
 The gateway ran on a laptop against a cold unit (RTX A5000, our llama.cpp image,

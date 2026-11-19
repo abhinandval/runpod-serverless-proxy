@@ -94,25 +94,41 @@ places it where the engine looks:
 For llama.cpp all three are ordinary Hugging Face files, so `hf download` and a
 flag cover every case. Its `-hf` auto-download is not used.
 
-Strata, from reading its `terminal/setup.py` (to be confirmed on a worker):
+Strata, from reading its `setup.py` and `docker/entrypoint.sh` at v0.2.7:
 
-- **Main model:** files given through `MODEL_PATH` are treated as the user's own
-  and are not hash-checked, so this should remove both the download (about
-  2 min) and the verification pass (about 2.5 min) from Strata's start.
+- **Main model:** the agent downloads the shards and passes their folder as
+  `MODEL_PATH`. That removes Strata's own download and, for the GSQ-RCO files,
+  its SHA-256 pass (measured: 8 s of checking instead of about 2.5 min). The
+  Unsloth files Strata pins by hash are still hashed when given this way,
+  unless a `<shard>.done` mark with the pinned hash sits next to the file.
 - **Projector:** an ordinary file (0.9 GB) in
-  `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF`; setup looks for it in the data
-  folder's `models/`.
+  `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF`; setup looks for it by name in
+  the data folder's `models/`, so the agent links it there and sets
+  `VISION=on` unless the unit set `VISION` itself.
+- **Settings:** Strata is configured through environment variables (`MODEL`,
+  `FAMILY`, `CONTEXT`, `PARALLEL`, `VISION` ...). The unit sets them directly;
+  the agent only adds `PORT`, `MODEL_PATH` and `API_KEY`.
+- **API key:** Strata does not serve without a key of its own. The agent makes
+  a random one at every start and puts it on each proxied request, so callers
+  only ever hold the RunPod key.
 - **Draft layer:** not a file on Hugging Face. Strata reads 31 `mtp.*` tensors
   (about 5 GB) out of the 360 GB `Qwen/Qwen3.8-Flash-Next` checkpoint with range
   requests, then packs them with its own tools into `mtp/mtp-q2_0.gguf` and
   `mtp/rt/experts.bin`. Setup skips the whole step when `mtp/rt/experts.bin`
   exists. This step was 4.5 to 6 minutes of the cold start, and `hf download`
   cannot replace it. It is the same for every model in the family, so the
-  prepared `mtp/` folder is **baked into our Strata image**: the image build
-  runs Strata's own fetch and pack tools once, and the agent links the result
-  into `/data/Strata-data/mtp/` before starting Strata. The layer is versioned
-  with the image, which pins a Strata version. `DRAFTING=off` remains available
-  and skips it at roughly half the output speed.
+  prepared `mtp/` folder is **baked into our Strata image**
+  (`/opt/strata-draft/mtp`): the image build runs Strata's own fetch, verify
+  and pack tools once, and the agent links the result to
+  `/data/Strata-data/mtp` before starting Strata. The layer is versioned
+  with the image, which pins a Strata version.
+- **Licence of the baked layer:** the tensors are a derivative of
+  `Qwen/Qwen3.8-Flash-Next`, released under the Qwen Community License 1.0. It
+  allows redistribution provided its notice travels with every copy, so the
+  notice is stored next to the layer (`LICENSE.qwen`). The same licence asks
+  anyone running a commercial model-as-a-service or AI work-assistant business
+  on the model to get a separate licence from Qwen; internal team use is
+  exempt. That applies to whoever runs the model, with or without our image.
 
 **Downloader: the Hugging Face CLI** (`hf download` with
 `HF_XET_HIGH_PERFORMANCE=1`), run by the agent as a child process. Measured on a
@@ -287,10 +303,6 @@ instance or asynchronous jobs are needed.
 
 ## Open items
 
-- Whether the Qwen licence allows redistributing the prepared draft layer in a
-  public image; if not, the Strata image stays private or the layer is fetched
-  at start as today.
-- Confirm on a worker that `MODEL_PATH` skips Strata's verification pass.
-- GitHub owner and repository name (image names, Go module path).
+- Skipping Strata's SHA-256 pass for the Unsloth files, which it pins by hash.
 - The 5.5 minute request cap on long generations.
 - Account balance: the API has a balance schema that has not been called yet.

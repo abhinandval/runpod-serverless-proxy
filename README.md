@@ -17,9 +17,9 @@ Starter engines: llama.cpp and Strata, each from our own image.
 ## Status
 
 **Phase 1 in progress.** The measurement spike is done and the design is fixed.
-The unit agent, the llama.cpp engine image and the gateway core exist. Request
-records (SQLite), the Strata image and the fleet reconciler are not built yet,
-so units are still deployed by hand.
+The unit agent, the llama.cpp and Strata engine images and the gateway core
+exist. Request records (SQLite) and the fleet reconciler are not built yet, so
+units are still deployed by hand.
 
 - [spike/README.md](spike/README.md): how to run the spike
 - [docs/design.md](docs/design.md): Phase 1 design
@@ -45,7 +45,7 @@ mise run test
 | `internal/config` | YAML configuration with `${env.NAME}` substitution |
 | `cmd/agent` | Entrypoint of every engine image: downloads the model, starts the engine, reports status, proxies requests |
 | `internal/agent` | The agent's lifecycle, downloader and engine drivers |
-| `images/` | Engine images (llama.cpp so far) |
+| `images/` | Engine images (llama.cpp, Strata) |
 | `cmd/probe` | Spike CLI: creates test endpoints, runs probes, records JSONL |
 | `internal/runpod/manage` | RunPod REST v2 management client (endpoints, tags, releases, catalog) |
 | `internal/runpod/infer` | Request-side client (queue API, `/openai/v1`, load balancer) with timing |

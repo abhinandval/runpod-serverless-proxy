@@ -1,8 +1,9 @@
 # Spike findings
 
-Status: **partly measured** on 2026-11-19. Queue and load-balancer behaviour for
-vLLM is measured; llama.cpp is confirmed working on a load balancer; Strata, the
-Claude Code session, `/runsync` expiry and the rollout probe are still open.
+Status: **mostly measured** on 2026-11-19. Queue and load-balancer behaviour is
+measured for vLLM, and llama.cpp and Strata are both confirmed working on a load
+balancer. A Claude Code session, `/runsync` expiry and the rollout probe are
+still open.
 
 ## Environment
 
@@ -11,6 +12,10 @@ Claude Code session, `/runsync` expiry and the rollout probe are still open.
 - Target `b`: load balancer, `vllm/vllm-openai:latest`, same model.
 - Target `c`: load balancer, `ghcr.io/ggml-org/llama.cpp:server-cuda`,
   `unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL` (17.7 GB).
+- Target `s`: load balancer, `ghcr.io/niko1221/strata:0.2.7-cuda13`, `FAMILY=qwen`
+  `MODEL=IQ2_XS`, pool `AMPERE_48` (A40, 48 GB VRAM, 46 GB container RAM limit),
+  200 GB container disk, no network volume, FlashBoot off, behind the shim in
+  `cmd/probe/strata_shim.py`.
 - Raw recordings are in `spike/results/` (git-ignored).
 
 ## Measured
@@ -23,6 +28,17 @@ Claude Code session, `/runsync` expiry and the rollout probe are still open.
 | b | LB stream | 90.2 s | 90.2 s | 200 on the first attempt, no retry needed |
 | b | LB non-stream (repeat) | 103.0 s | n/a | 200 |
 | c | LB non-stream, 17.7 GB model | 87 s | n/a | 200 (model download about 43 s, load 5 s) |
+
+| s | LB non-stream, Strata IQ2_XS | 734 s in total | n/a | two `400 timed out waiting for worker` (300 s each), then 200 on the third attempt |
+
+Timeline of the Strata cold start (container start to ready: **11 min 46 s**):
+
+| Phase | Duration |
+| --- | --- |
+| Download model files (39.2 GB of the 68.9 GB plan, 16 ranged connections) | about 2 min 10 s |
+| Verify the files (SHA-256) | about 2 min 35 s |
+| Prepare the model and download the 5 GB draft layer | about 6 min 20 s |
+| Start the engine and load the model | 34 s |
 
 Timeline of the cold queue request (`a`): workers allocated and idle by about
 30 s, job picked up at about 50 s, model download and load until 175 s.
@@ -38,6 +54,10 @@ Timeline of the cold queue request (`a`): workers allocated and idle by about
 | a | `/run` + `/stream` polling | first poll 0.2 s after submit | 1.4 s |
 | b | LB stream | 0.5 s | 1.0 s |
 | b | LB `/v1/messages` stream with tool | 0.5 s | 0.6 s |
+| s | LB stream (Strata, through the shim) | 0.4 s | 1.3 s |
+| s | LB `/v1/messages` stream | 0.3 s | 1.2 s |
+| s | LB `/v1/messages` stream with tool | 0.4 s | 1.3 s |
+| s | 4 parallel streams | 0.8 s | 5.2 to 5.7 s each |
 
 ### Answers to the open questions
 
@@ -61,11 +81,15 @@ Timeline of the cold queue request (`a`): workers allocated and idle by about
 | Resource tagging | Not enabled on this account (`403 Resource tagging is not enabled for this user`). |
 | Load balancer response headers | Include `X-Runpod-Worker-Id`. All traffic passes through Cloudflare. |
 | Model download speed | 17.7 GB from Hugging Face in about 43 s on the worker. |
+| Strata on serverless | **Works with the stock image plus a shim.** The shim answers `/ping` (204 while loading, 200 when `/v1/models` answers) and injects Strata's own API key, so callers only need the RunPod key. Strata ran without the Docker memlock and shm options. It ignores the request's `model` field and reports `qwen3.8-flash-next-iq2_xs`. About 157 tokens/s on an A40. |
+| Strata Anthropic fidelity | Correct event order with `thinking` blocks before `tool_use`, streamed `input_json_delta`, `: keep-alive` SSE comments, and cache usage fields in `message_delta`. |
+| Strata downloader | Its own stdlib downloader (not `huggingface_hub`): pinned Hugging Face `resolve` URLs, 16 ranged connections for files over 256 MB, resumable, SHA-256 verified. `HF_ENDPOINT` selects a mirror. |
+| FlashBoot limit | This plan allows FlashBoot on 3 endpoints; a fourth create fails with 400 until FlashBoot is off. |
+| Container memory | The A40 worker has a 46 GB memory limit; Strata warns about it but IQ2_XS loaded. Host RAM per pool is in the catalog (`minRam`): 16 GB pools have about 31 GB, so they cannot run Strata's standard sizes. |
 | Schema surprises | None on create or patch. `args` is stored as `{"cmd":[...]}` JSON. A PATCH of entrypoint, cmd, disk and env produced endpoint version 2. |
 
 ### Still open
 
-- Strata on serverless (needs a network volume, its own API key handling, and a `/ping` route).
 - A Claude Code session against an endpoint.
 - `/runsync` when the wait expires during a cold start; non-streaming cold request on the queue route.
 - Rollout behaviour on an image change while workers are serving.
@@ -91,6 +115,15 @@ Timeline of the cold queue request (`a`): workers allocated and idle by about
   prefix plus stored ids; tags are optional.
 - **Startup key check:** verify that the inference key can reach each endpoint
   and the management key can read logs, and report scope problems clearly.
-- **Model weights:** downloading at start is workable for models up to roughly
-  20 GB (under a minute here). Larger models and engines that prepare data on
-  first start (Strata) need a network volume. Still to be decided per engine.
+- **Model weights: download at start, no network volume.** Decided by the
+  project owner; the cold-start delay is accepted. Measured cost: under a minute
+  for a 17.7 GB GGUF, about 12 minutes for Strata IQ2_XS, most of which is
+  verification and preparation rather than download.
+- **Cold starts longer than 300 s are normal for large engines**, so the
+  gateway's retry of `400 timed out waiting for worker` is required, not an
+  edge case. Each retry must keep the client connection alive.
+- **Every engine image carries a small shim** (as prototyped for Strata) that
+  serves `/ping` from real readiness and handles engine-specific auth, so the
+  gateway talks to all engines the same way.
+- **FlashBoot is a per-plan quota**, so the fleet config needs it per unit and
+  the reconciler must report the limit clearly.

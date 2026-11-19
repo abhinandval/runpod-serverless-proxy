@@ -122,10 +122,13 @@ therefore carries Python and `huggingface_hub`; the agent reads progress from
 the size of the files on disk against the sizes the Hub API reports, rather than
 parsing the CLI's output.
 
-**To verify first, on a real endpoint:** RunPod routes as soon as `/ping`
-returns 200, and status polls keep a worker alive through a long download.
-If either fails, fall back to `/ping` = 204 until ready (the spike's behaviour)
-with the gateway retrying RunPod's 300 s `timed out waiting for worker`.
+**Verified on RunPod (2026-11-19, RTX A5000, our llama.cpp image):** RunPod
+routes to the agent as soon as `/ping` answers, so `/agent/status` was readable
+through the load balancer while the model was still downloading, and polling it
+kept the worker up. First status answer came 40 s after the first request
+(worker allocation and container start); the agent itself needed 25.7 s to
+download 17.7 GB and 12.5 s to load, and reported `ready` 65 s after the first
+request. Requests then streamed through the agent in both API formats.
 
 ## Config
 
@@ -279,6 +282,5 @@ instance or asynchronous jobs are needed.
   at start as today.
 - Confirm on a worker that `MODEL_PATH` skips Strata's verification pass.
 - GitHub owner and repository name (image names, Go module path).
-- Whether the early-`/ping` design holds on RunPod (first task of step 1).
 - The 5.5 minute request cap on long generations.
 - Account balance: the API has a balance schema that has not been called yet.

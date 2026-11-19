@@ -151,6 +151,27 @@ the same type). `cmd/probe/dlbench.py` is the harness. Seconds, two runs each:
   that variance.
 - Not tried on a worker with fewer host cores.
 
+### Our llama.cpp image with the agent (first Phase 1 check)
+
+Image `ghcr.io/abhinandval/runpod-serverless-proxy/llamacpp:sha-affe7de` on an
+RTX A5000, Qwen3.8-27B UD-Q4_K_XL, configured only through environment
+variables, polled through the load balancer from a cold start.
+
+| Moment | Seconds after the first request |
+| --- | --- |
+| First `/agent/status` answer (phase `downloading`, 7.1 of 17.7 GB) | 40 |
+| Phase `loading` | 51 |
+| Phase `ready` | 65 |
+
+- The agent's own phases: download 25.7 s, load 12.5 s. The remaining 25 s or so
+  is RunPod allocating the worker and starting the container.
+- Cold start to ready was 65 s, against 77 to 87 s for the stock image with
+  llama.cpp's own downloader.
+- Warm: first token in 0.8 s for OpenAI streaming; Anthropic streaming with a
+  tool returned the correct event order.
+- RunPod routed to the agent during the download, which confirms the
+  early-`/ping` design; a request before ready would get the agent's 503.
+
 ## Decisions
 
 - **Primary endpoint type: load balancer.** It needs no handler code, works with

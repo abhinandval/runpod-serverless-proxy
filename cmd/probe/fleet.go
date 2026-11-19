@@ -23,6 +23,11 @@ import (
 //go:embed strata_shim.py
 var strataShim string
 
+// dlBench is the download benchmark worker; see its docstring.
+//
+//go:embed dlbench.py
+var dlBench string
+
 // ---- catalog ----
 
 func cmdCatalog(ctx context.Context, args []string) error {
@@ -110,6 +115,12 @@ func cmdUp(ctx context.Context, args []string) error {
 	}
 	gpu := func() *manage.GPUConfig { return &manage.GPUConfig{Pools: pools, ExcludedTypes: excluded, Count: 1} }
 
+	// The benchmark worker gets the Hugging Face token only if one is set locally.
+	benchEnv := map[string]string{"PORT": "8080", "PORT_HEALTH": "8080", "BENCH_PY": dlBench}
+	if tok := os.Getenv("HF_TOKEN"); tok != "" {
+		benchEnv["HF_TOKEN"] = tok
+	}
+
 	specs := map[string]struct {
 		note string
 		req  manage.CreateEndpointRequest
@@ -182,6 +193,25 @@ func cmdUp(ctx context.Context, args []string) error {
 				Timeout: 300000, Flashboot: *flashboot,
 			},
 		},
+		"d": {
+			note: "download benchmark worker (aria2c vs hf vs curl)",
+			req: manage.CreateEndpointRequest{
+				Name: namePrefix + "d-lb-dlbench" + *suffix,
+				Type: manage.TypeLoadBalancer,
+				Container: manage.Container{
+					Image:      "python:3.12-slim",
+					Disk:       60,
+					Entrypoint: []string{"/bin/sh", "-c"},
+					Cmd:        []string{`printf '%s' "$BENCH_PY" > /tmp/bench.py; exec python3 /tmp/bench.py`},
+					Env:        benchEnv,
+					Ports:      []string{"8080/http"},
+				},
+				GPU:     gpu(),
+				Workers: &manage.Workers{Min: intPtr(0), Max: intPtr(1), IdleTimeout: intPtr(120), InitTimeout: intPtr(900)},
+				Scaling: manage.Scaling{Type: manage.ScalingRequestCount, RequestCount: 4},
+				Timeout: 300000, Flashboot: "OFF",
+			},
+		},
 		"s": {
 			note: "load balancer + Strata behind a /ping and auth shim, no network volume",
 			req: manage.CreateEndpointRequest{
@@ -238,7 +268,7 @@ func cmdUp(ctx context.Context, args []string) error {
 		key = strings.TrimSpace(key)
 		spec, ok := specs[key]
 		if !ok {
-			return fmt.Errorf("unknown endpoint %q (a, b, c or s)", key)
+			return fmt.Errorf("unknown endpoint %q (a, b, c, d or s)", key)
 		}
 		if existing, ok := st.Targets[key]; ok {
 			if _, err := mc.GetEndpoint(ctx, existing.ID); err == nil {

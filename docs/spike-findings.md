@@ -128,6 +128,25 @@ availability as low.
 - Endpoint names must be unique, and a deleted endpoint's name stays reserved for
   a while (`400 endpoint template names must be unique`).
 
+### Download tools (A/B on one worker)
+
+One RTX A5000 worker (96 host cores, container disk) downloaded the same 17.7 GB
+file (`unsloth/Qwen3.8-27B-GGUF`, UD-Q4_K_XL) with each tool, in the order
+shown, without a Hugging Face token. `cmd/probe/dlbench.py` is the harness.
+
+| Tool | Run 1 | Run 2 |
+| --- | --- | --- |
+| `aria2c` 1.37, 16 connections | 32.4 s (545 MB/s) | 40.1 s (441 MB/s) |
+| `hf download` 2.4.0 (Xet) | 36.4 s (485 MB/s) | 17.0 s (1,041 MB/s) |
+| `hf download` with `HF_XET_HIGH_PERFORMANCE=1` | 15.0 s (1,179 MB/s) | 16.0 s (1,107 MB/s) |
+| `curl`, one stream | 72.2 s (245 MB/s) | not run |
+
+- The Hugging Face CLI in high-performance mode is the fastest and the most
+  consistent, a little over twice as fast as `aria2c`.
+- Plain `hf download` varied by a factor of two between runs; two samples are
+  not enough to say why.
+- Not yet run with a token, and not yet tried on a worker with fewer cores.
+
 ## Decisions
 
 - **Primary endpoint type: load balancer.** It needs no handler code, works with

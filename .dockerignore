@@ -1,0 +1,7 @@
+.git
+.claude
+.env
+.env.*
+spike/results
+spike/state.json
+docs

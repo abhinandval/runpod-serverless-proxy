@@ -59,6 +59,8 @@ func cmdUp(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("up", flag.ExitOnError)
 	pool := fs.String("pool", os.Getenv("SPIKE_GPU_POOL"), "serverless GPU pool id (see `probe catalog`); comma-separated for several")
 	only := fs.String("only", "a,b,c", "which test endpoints to create")
+	suffix := fs.String("name-suffix", "", "appended to endpoint names; RunPod requires unique names, and a deleted endpoint's name stays taken for a while")
+	exclude := fs.String("exclude-types", "", "comma-separated GPU type ids to remove from the pools, e.g. \"NVIDIA L4\" (applies to every endpoint)")
 	maxWorkers := fs.Int("max-workers", 2, "max workers per endpoint")
 	idle := fs.Int("idle-timeout", 30, "seconds before an idle worker scales down")
 	flashboot := fs.String("flashboot", "FLASHBOOT", "OFF | FLASHBOOT | PRIORITY_FLASHBOOT")
@@ -98,7 +100,15 @@ func cmdUp(ctx context.Context, args []string) error {
 	workers := func() *manage.Workers {
 		return &manage.Workers{Min: intPtr(0), Max: intPtr(*maxWorkers), IdleTimeout: intPtr(*idle), InitTimeout: intPtr(900)}
 	}
-	gpu := func() *manage.GPUConfig { return &manage.GPUConfig{Pools: pools, Count: 1} }
+	// Pools are the unit of selection; a pool is narrowed to specific cards by
+	// excluding the others.
+	var excluded []string
+	for _, t := range strings.Split(*exclude, ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			excluded = append(excluded, t)
+		}
+	}
+	gpu := func() *manage.GPUConfig { return &manage.GPUConfig{Pools: pools, ExcludedTypes: excluded, Count: 1} }
 
 	specs := map[string]struct {
 		note string
@@ -107,7 +117,7 @@ func cmdUp(ctx context.Context, args []string) error {
 		"a": {
 			note: "queue + official worker-vllm (/run, /runsync, /openai/v1)",
 			req: manage.CreateEndpointRequest{
-				Name: namePrefix + "a-queue-vllm",
+				Name: namePrefix + "a-queue-vllm" + *suffix,
 				Type: manage.TypeQueue,
 				Container: manage.Container{
 					Image: *imgWorker,
@@ -128,7 +138,7 @@ func cmdUp(ctx context.Context, args []string) error {
 		"b": {
 			note: "load balancer + stock vLLM server",
 			req: manage.CreateEndpointRequest{
-				Name: namePrefix + "b-lb-vllm",
+				Name: namePrefix + "b-lb-vllm" + *suffix,
 				Type: manage.TypeLoadBalancer,
 				Container: manage.Container{
 					Image: *imgVLLM,
@@ -150,7 +160,7 @@ func cmdUp(ctx context.Context, args []string) error {
 		"c": {
 			note: "load balancer + stock llama.cpp server",
 			req: manage.CreateEndpointRequest{
-				Name: namePrefix + "c-lb-llamacpp",
+				Name: namePrefix + "c-lb-llamacpp" + *suffix,
 				Type: manage.TypeLoadBalancer,
 				Container: manage.Container{
 					Image: *imgLlama,
@@ -175,7 +185,7 @@ func cmdUp(ctx context.Context, args []string) error {
 		"s": {
 			note: "load balancer + Strata behind a /ping and auth shim, no network volume",
 			req: manage.CreateEndpointRequest{
-				Name: namePrefix + "s-lb-strata",
+				Name: namePrefix + "s-lb-strata" + *suffix,
 				Type: manage.TypeLoadBalancer,
 				Container: manage.Container{
 					Image: *imgStrata,
@@ -196,7 +206,7 @@ func cmdUp(ctx context.Context, args []string) error {
 					},
 					Ports: []string{"8080/http"},
 				},
-				GPU: &manage.GPUConfig{Pools: strings.Split(*strataPool, ","), Count: 1, MinCudaVersion: "13.0"},
+				GPU: &manage.GPUConfig{Pools: strings.Split(*strataPool, ","), ExcludedTypes: excluded, Count: 1, MinCudaVersion: "13.0"},
 				// One worker, a long idle timeout and the maximum init timeout: a
 				// cold start downloads about 70 GB before the engine can answer.
 				Workers: &manage.Workers{Min: intPtr(0), Max: intPtr(1), IdleTimeout: intPtr(300), InitTimeout: intPtr(14400)},

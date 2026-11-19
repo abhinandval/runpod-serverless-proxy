@@ -102,6 +102,32 @@ Timeline of the cold queue request (`a`): workers allocated and idle by about
 - Whether a client disconnect stops generation on a load balancer (check engine logs).
 - Scale-out to a second worker under sustained load.
 
+### Cheaper GPUs (pool `AMPERE_24`, $0.75 per GPU-hour)
+
+Both engines were redeployed on `AMPERE_24` with the L4 and the MIG slice excluded,
+which leaves the RTX A5000 and RTX 3090. Both endpoints were placed on an RTX A5000
+(24 GB VRAM, about 50 GB host RAM) within seconds, despite the catalog rating
+availability as low.
+
+| Engine and model | GPU | $/hour | Cold start | Speed |
+| --- | --- | --- | --- | --- |
+| llama.cpp, Qwen3.8-27B UD-Q4_K_XL | RTX 4090 | 1.34 | 87 s | not captured |
+| llama.cpp, Qwen3.8-27B UD-Q4_K_XL | RTX A5000 | 0.75 | 77 s | 33.6 tokens/s |
+| Strata, IQ2_XS | A40 (48 GB) | 1.22 | 11 min 46 s | 156.8 tokens/s |
+| Strata, IQ2_XS | RTX A5000 | 0.75 | about 10 min | 88.8 tokens/s |
+
+- Strata IQ2_XS loads and serves on a 24 GB card: it keeps part of the model in
+  host RAM, at a little over half the A40's speed.
+- Per dollar the two are close for a single stream (about 118 tokens/s per $/hour
+  on the A5000, 129 on the A40); the A5000 is cheaper per cold start (about $0.13
+  against $0.24) and the A40 is faster for the user.
+- No RTX 3090 was allocated, so the 3090 (about 30 GB host RAM) is untested; with
+  less RAM it is the riskier card for Strata.
+- A pool cannot be restricted to named cards directly; it is narrowed with
+  `gpu.excludedTypes`, so a card added to the pool later becomes eligible.
+- Endpoint names must be unique, and a deleted endpoint's name stays reserved for
+  a while (`400 endpoint template names must be unique`).
+
 ## Decisions
 
 - **Primary endpoint type: load balancer.** It needs no handler code, works with
